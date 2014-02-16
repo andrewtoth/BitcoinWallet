@@ -1,9 +1,5 @@
 (function (window) {
-    var ADDRESS = "wallet.address",
-        PRIVATE_KEY = "wallet.private_key",
-        IS_ENCRYPTED = "wallet.is_encrypted",
-        LAST_BALANCE = "wallet.last_balance",
-        balance = 0,
+    var balance = 0,
         address = '',
         privateKey = '',
         isEncrypted = false,
@@ -29,38 +25,34 @@
             balanceListener = listener;
         },
 
-        send: function (sendAddress, amount, fee, password, listener) {
-            var decryptedPrivateKey = this.getDecryptedPrivateKey(password);
-            if (decryptedPrivateKey) {
-                var req = new XMLHttpRequest();
-                req.onreadystatechange = function () {
-                    if (req.readyState === 4) {
-                        if (req.status == 500) {
-                            listener(false, 'Insufficient funds');
+        send: function (sendAddress, amount, fee, password) {
+            return new Promise(function (resolve, reject) {
+                var decryptedPrivateKey = this.getDecryptedPrivateKey(password);
+                if (decryptedPrivateKey) {
+                    ajax.getJSON('https://blockchain.info/unspent?address=' + address).then(function (json) {
+                        var inputs = json.unspent_outputs;
+                        var selectedOuts = [];
+
+                        var eckey = new Bitcoin.ECKey(decryptedPrivateKey);
+                        var totalInt = Number(amount) + Number(fee);
+                        var txValue = new BigInteger('' + totalInt, 10);
+                        var availableValue = BigInteger.ZERO;
+                        var i;
+                        for (i = 0; i < inputs.length; i++) {
+                            selectedOuts.push(inputs[i]);
+                            availableValue = availableValue.add(new BigInteger('' + inputs[i].value, 10));
+                            if (availableValue.compareTo(txValue) >= 0) break;
+                        }
+                        if (availableValue.compareTo(txValue) < 0) {
+                            reject(Error('Insufficient funds'));
+                            return  null;
                         } else {
-                            var json = JSON.parse(req.responseText);
-                            var inputs = json.unspent_outputs;
-                            var selectedOuts = [];
-
-                            var eckey = new Bitcoin.ECKey(decryptedPrivateKey);
-                            var totalInt = Number(amount) + Number(fee);
-                            var txValue = new BigInteger('' + totalInt, 10);
-                            var availableValue = BigInteger.ZERO;
-                            var i;
-                            for (i = 0; i < inputs.length; i++) {
-                                selectedOuts.push(inputs[i]);
-                                availableValue = availableValue.add(new BigInteger('' + inputs[i].value, 10));
-                                if (availableValue.compareTo(txValue) >= 0) break;
-                            }
-                            if (availableValue.compareTo(txValue) < 0) {
-                                listener(false, 'Insufficient funds');
-                                return;
-                            }
-
+                            var hash,
+                                script;
                             var sendTx = new Bitcoin.Transaction();
                             for (i = 0; i < selectedOuts.length; i++) {
-                                var hash = Crypto.util.bytesToBase64(Crypto.util.hexToBytes(selectedOuts[i].tx_hash));
-                                var script = new Bitcoin.Script(Crypto.util.hexToBytes(selectedOuts[i].script));
+                                hash = Crypto.util.bytesToBase64(Crypto.util.hexToBytes(selectedOuts[i].tx_hash));
+                                script = new Bitcoin.Script(Crypto.util.hexToBytes(selectedOuts[i].script));
                                 var txin = new Bitcoin.TransactionIn({
                                     outpoint: {
                                         hash: hash,
@@ -82,120 +74,132 @@
                             var hashType = 1; // SIGHASH_ALL
                             for (i = 0; i < sendTx.ins.length; i++) {
                                 var connectedScript = sendTx.ins[i].script;
-                                var hash = sendTx.hashTransactionForSignature(connectedScript, i, hashType);
+                                hash = sendTx.hashTransactionForSignature(connectedScript, i, hashType);
                                 var signature = eckey.sign(hash);
                                 signature.push(parseInt(hashType, 10));
                                 var pubKey = eckey.getPub();
-                                var script = new Bitcoin.Script();
+                                script = new Bitcoin.Script();
                                 script.writeBytes(signature);
                                 script.writeBytes(pubKey);
                                 sendTx.ins[i].script = script;
                             }
                             var data = 'tx=' + Crypto.util.bytesToHex(sendTx.serialize());
-
-                            var newReq = new XMLHttpRequest();
-                            newReq.open('POST', 'https://blockchain.info/pushtx', false);
-                            newReq.setRequestHeader('Content-type', 'application/x-www-form-urlencoded');
-                            newReq.send(data);
-                            if (newReq.status == 200) {
-                                listener(true);
-                            } else {
-                                listener(false, 'Unknown error');
-                            }
+                            return ajax.post('https://blockchain.info/pushtx', data);
                         }
-                    }
-                };
-                req.open('GET', 'https://blockchain.info/unspent?address=' + address, true);
-                req.send();
-                balanceListener(balance - amount - fee);
-            } else {
-                listener(false, 'Incorrect password');
-            }
+                    }, function () {
+                        reject(Error('Insufficient funds'));
+                    }).then(function () {
+                        balanceListener(balance - amount - fee);
+                        resolve();
+                    }, function () {
+                        reject(Error('Unknown error'));
+                    });
+                } else {
+                    reject(Error('Incorrect password'));
+                }
+            });
         },
 
-        generateAddress: function (listener) {
-            if (!address.length) {
-                var eckey = new Bitcoin.ECKey(false);
-                privateKey = eckey.getExportedPrivateKey();
-                address = eckey.getBitcoinAddress().toString();
-                balance = 0;
-                isEncrypted = false;
-                updateBalance();
-                walletStorage.setItems([ADDRESS, IS_ENCRYPTED, PRIVATE_KEY], [address, isEncrypted, privateKey], listener);
-            } else {
-                listener(false);
-            }
-        },
-
-        restoreAddress: function (listener) {
-              walletStorage.getItems([ADDRESS, PRIVATE_KEY, IS_ENCRYPTED], function (values) {
-                  if (values[0]) {
-                      address = values[0];
-                      privateKey = values[1];
-                      isEncrypted = values[2];
-                      updateBalance();
-                      listener(true);
-                  } else {
-                      listener(false);
-                  }
-              });
-        },
-
-        importAddress: function (_privateKey, listener) {
-            if (!address.length) {
-                try {
-                    var eckey = new Bitcoin.ECKey(_privateKey);
+        generateAddress: function () {
+            return new Promise(function (resolve, reject) {
+                if (!address.length) {
+                    var eckey = new Bitcoin.ECKey(false);
                     privateKey = eckey.getExportedPrivateKey();
                     address = eckey.getBitcoinAddress().toString();
                     balance = 0;
                     isEncrypted = false;
                     updateBalance();
-                    walletStorage.setItems([ADDRESS, IS_ENCRYPTED, PRIVATE_KEY], [address, isEncrypted, privateKey], listener);
-                } catch (e) {
-                    listener(false);
-                }
-            } else {
-                listener(false)
-            }
-        },
-
-        deleteAddress: function (password, listener) {
-            if (this.validatePassword(password)) {
-                if (websocket) {
-                    websocket.close();
-                    websocket = null;
-                }
-                balance = 0;
-                address = '';
-                privateKey = '';
-                isEncrypted = false;
-                walletStorage.removeItems([ADDRESS, PRIVATE_KEY, IS_ENCRYPTED, LAST_BALANCE], listener);
-            } else {
-                listener(false);
-            }
-        },
-
-        updatePassword: function (password, newPassword, listener) {
-            var decryptedPrivateKey = this.getDecryptedPrivateKey(password);
-            if (decryptedPrivateKey) {
-                if (newPassword) {
-                    privateKey = CryptoJS.AES.encrypt(decryptedPrivateKey, newPassword);
-                    isEncrypted = true;
+                    Promise.all([preferences.setAddress(address), preferences.setPrivateKey(privateKey), preferences.setIsEncrypted(isEncrypted)]).then(function () {
+                        resolve();
+                    });
                 } else {
-                    privateKey = decryptedPrivateKey;
-                    isEncrypted = false;
+                    reject(Error('Current address must be deleted'));
                 }
-                walletStorage.setItems([IS_ENCRYPTED, PRIVATE_KEY], [isEncrypted, privateKey], listener);
-            } else {
-                listener(false);
-            }
+            });
+        },
+
+        restoreAddress: function () {
+            return new Promise(function (resolve, reject) {
+                Promise.all([preferences.getAddress(), preferences.getPrivateKey(), preferences.getIsEncrypted()]).then(function (values) {
+                    if (values[0]) {
+                        address = values[0];
+                        privateKey = values[1];
+                        isEncrypted = values[2];
+                        updateBalance();
+                        resolve();
+                    } else {
+                        reject(Error('No address'));
+                    }
+                });
+            });
+        },
+
+        importAddress: function (_privateKey) {
+            return new Promise(function (resolve, reject) {
+                if (!address.length) {
+                    try {
+                        var eckey = new Bitcoin.ECKey(_privateKey);
+                        privateKey = eckey.getExportedPrivateKey();
+                        address = eckey.getBitcoinAddress().toString();
+                        balance = 0;
+                        isEncrypted = false;
+                        updateBalance();
+                        Promise.all([preferences.setAddress(address), preferences.setPrivateKey(privateKey), preferences.setIsEncrypted(isEncrypted)]).then(function () {
+                            resolve();
+                        });
+                    } catch (e) {
+                        reject(Error('Invalid private key'));
+                    }
+                } else {
+                    reject(Error('Current address must be deleted'));
+                }
+            });
+        },
+
+        deleteAddress: function (password) {
+            return new Promise(function (resolve, reject) {
+                if (this.validatePassword(password)) {
+                    if (websocket) {
+                        websocket.close();
+                        websocket = null;
+                    }
+                    balance = 0;
+                    address = '';
+                    privateKey = '';
+                    isEncrypted = false;
+                    Promise.all([preferences.setAddress(''), preferences.setPrivateKey('')]).then(function () {
+                        resolve();
+                    });
+                } else {
+                    reject(Error('Incorrect password'));
+                }
+            });
+        },
+
+        updatePassword: function (password, newPassword) {
+            return new Promise(function (resolve, reject) {
+                var decryptedPrivateKey = this.getDecryptedPrivateKey(password);
+                if (decryptedPrivateKey) {
+                    if (newPassword) {
+                        privateKey = CryptoJS.AES.encrypt(decryptedPrivateKey, newPassword);
+                        isEncrypted = true;
+                    } else {
+                        privateKey = decryptedPrivateKey;
+                        isEncrypted = false;
+                    }
+                    Promise.all([preferences.setIsEncrypted(isEncrypted), preferences.setPrivateKey(privateKey)]).then(function () {
+                        resolve();
+                    });
+                } else {
+                    reject(Error('Incorrect password'));
+                }
+            });
         },
 
         validatePassword: function (password) {
             if (isEncrypted) {
                 try {
-                    var decryptedPrivateKey = CryptoJS.AES.decrypt(privateKey, password).toString(CryptoJS.enc.Utf8);
-                    return decryptedPrivateKey;
+                    return CryptoJS.AES.decrypt(privateKey, password).toString(CryptoJS.enc.Utf8);
                 } catch (e) {
                     return false;
                 }
@@ -218,26 +222,20 @@
             } else {
                 return privateKey;
             }
-            return decryptedPrivateKey;
         }
 
     };
 
     function updateBalance() {
         if (address.length) {
-            walletStorage.getItems([LAST_BALANCE], function (items) {
-                if (items[0]) {
-                    balance = items[0];
-                    balanceListener(balance);
-                }
-            });
-            var req = new XMLHttpRequest();
-            req.onreadystatechange = function () {
-                if (req.readyState === 4) {
-                    balance = req.responseText;
-                    walletStorage.setItems([LAST_BALANCE], [balance], function () {
-                        if (balanceListener) balanceListener(balance);
-                    });
+            preferences.getLastBalance().then(function (result) {
+                balance = result;
+                if (balanceListener) balanceListener(balance);
+                ajax.get('https://blockchain.info/q/addressbalance/' + address).then(function (response) {
+                    balance = response;
+                    return preferences.setLastBalance(balance);
+                }).then(function () {
+                    if (balanceListener) balanceListener(balance);
                     if (websocket) {
                         websocket.close();
                     }
@@ -262,16 +260,14 @@
                                 balance = Number(balance) + Number(output.value);
                             }
                         }
-                        walletStorage.setItems([LAST_BALANCE], [balance], function () {
+                        preferences.setLastBalance(balance).then(function () {
                             if (balanceListener) balanceListener(balance);
                         });
                     };
-                }
-            };
-            req.open('GET', 'https://blockchain.info/q/addressbalance/' + address, true);
-            req.send();
+                });
+            });
         }
-    };
+    }
 
     window.wallet = new wallet();
 })(window);

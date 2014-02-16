@@ -20,10 +20,11 @@
         {
             "matches": ["<all_urls>"],
             "js": [
-                "js/jquery.min.js",
-                "js/cryptojs.min.js",
-                "js/bitcoinjs-lib.min.js",
-                "js/storage.js",
+                "js/libs/jquery.min.js",
+                "js/libs/cryptojs.min.js",
+                "js/libs/bitcoinjs-lib.min.js",
+                "js/ajax.js",
+                "js/preferences.js",
                 "js/currency-manager.js",
                 "js/wallet.js",
                 "js/content-script.js"

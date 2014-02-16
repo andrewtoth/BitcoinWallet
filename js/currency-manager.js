@@ -1,123 +1,60 @@
 (function (window) {
-    var EXCHANGE_RATE = 'wallet.currency.exchange_rate',
-        BTC_UNITS = 'wallet.prefs.btc_units',
-        CURRENCY = 'wallet.prefs.currency';
-
     var currencyManager = function () {};
     currencyManager.prototype = {
-        getExchangeRate: function (listener) {
-            return walletStorage.getItems([EXCHANGE_RATE], function (values) {
-                listener(values[0]);
+
+        updateExchangeRate: function () {
+            return preferences.getCurrency().then(function (currency) {
+                return ajax.getJSON('https://api.bitcoinaverage.com/ticker/' + currency);
+            }).then(function (response) {
+                return preferences.setExchangeRate(response['24h_avg']);
             });
         },
 
-        updateExchangeRate: function (listener) {
-            this.getCurrency(function (currency) {
-                var req = new XMLHttpRequest();
-                req.onreadystatechange = function () {
-                    if (req.readyState === 4) {
-                        var json = JSON.parse(req.responseText);
-                        walletStorage.setItems([EXCHANGE_RATE], [json['24h_avg']], function () {
-                            if (listener) listener(json['24h_avg']);
-                        });
-                    }
-                };
-                req.open('GET', 'https://api.bitcoinaverage.com/ticker/' + currency, true);
-                req.send();
-            });
-        },
-
-        getSymbol: function (listener) {
-            this.getCurrency(function (currency) {
+        getSymbol: function () {
+            return preferences.getCurrency().then(function (currency) {
                 switch (currency) {
                     case 'AUD':
                     case 'CAD':
                     case 'NZD':
                     case 'SGD':
                     case 'USD':
-                        listener('$', 'before');
-                        break;
+                        return(['$', 'before']);
                     case 'BRL':
-                        listener('R$', 'before');
-                        break;
+                        return(['R$', 'before']);
                     case 'CHF':
-                        listener(' Fr.', 'after');
-                        break;
+                        return([' Fr.', 'after']);
                     case 'CNY':
                     case 'JPY':
-                        listener('¥', 'before');
-                        break;
+                        return(['¥', 'before']);
                     case 'CZK':
-                        listener(' Kč', 'after');
-                        break;
+                        return([' Kč', 'after']);
                     case 'EUR':
-                        listener('€', 'before');
-                        break;
+                        return(['€', 'before']);
                     case 'GBP':
-                        listener('£', 'before');
-                        break;
+                        return(['£', 'before']);
                     case 'ILS':
-                        listener('₪', 'before');
-                        break;
+                        return(['₪', 'before']);
                     case 'NOK':
                     case 'SEK':
-                        listener(' kr', 'after');
-                        break;
+                        return([' kr', 'after']);
                     case 'PLN':
-                        listener('zł', 'after');
-                        break;
+                        return(['zł', 'after']);
                     case 'RUB':
-                        listener(' RUB', 'after');
-                        break;
+                        return([' RUB', 'after']);
                     case 'ZAR':
-                        listener(' R', 'after');
-                        break;
+                        return([' R', 'after']);
+                    default:
+                        return(['$', 'before']);
                 }
             });
         },
 
         getAvailableCurrencies: function () {
             return ['AUD', 'BRL', 'CAD', 'CHF', 'CNY', 'CZK', 'EUR', 'GBP', 'ILS', 'JPY', 'NOK', 'NZD', 'PLN', 'RUB', 'SEK', 'SGD', 'USD', 'ZAR'];
-        },
-
-        getBTCUnits: function (listener) {
-            walletStorage.getItems([BTC_UNITS], function (values) {
-                if (!values[0]) {
-                    walletStorage.setItems([BTC_UNITS], ['BTC'], function (status) {
-                        listener('BTC');
-                    });
-                } else {
-                    listener(values[0]);
-                }
-            });
-        },
-
-        setBTCUnits: function (units, listener) {
-            walletStorage.setItems([BTC_UNITS], [units], listener);
-        },
-
-        getCurrency: function (listener) {
-            walletStorage.getItems([CURRENCY], function (values) {
-                if (!values[0]) {
-                    walletStorage.setItems([CURRENCY], ['USD'], function (status) {
-                        listener('USD');
-                    });
-                } else {
-                    listener(values[0]);
-                }
-            });
-        },
-
+        }
     };
 
     var ret = new currencyManager();
-
-    currencyManager.prototype.setCurrency = function (currency, listener) {
-        walletStorage.setItems([CURRENCY], [currency], function () {
-            ret.updateExchangeRate(function() {});
-            listener();
-        });
-    }
 
     ret.updateExchangeRate();
 

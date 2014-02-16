@@ -1,67 +1,45 @@
 $(document).ready(function () {
-
-    var $amountAlert = $('#amountAlert').hide(),
-        $addressAlert = $('#addressAlert').hide(),
-        $successAlert = $('#successAlert').hide(),
-        $successAlertLabel = $('#successAlertLabel'),
-        $amount = $('#amount'),
-        val = '',
+    // Setup the wallet, page values and callbacks
+    var val = '',
         address = '',
         satoshis = 100000000,
         FEE = satoshis * .0001,
         BTCUnits = 'BTC',
         BTCMultiplier = satoshis;
-
-
-    // Setup the wallet, page values and callbacks
-    currencyManager.getBTCUnits(function (units) {
-        setupWallet();
-        setBTCUnits(units);
-    });
-
     function setupWallet() {
-        wallet.setBalanceListener(function (balance) {
-            setBalance(balance);
-        });
-
-        if (!wallet.getAddress().length) {
-            wallet.restoreAddress(function (status) {
-                if (!status) {
-                    wallet.generateAddress(function (status) {
-                        if (!status) {
-                            alert('Failed to generate wallet. Refresh and try again.');
-                        } else {
-                            setQRCodes();
-                        }
-                    });
-                } else {
-                    setQRCodes();
-                }
+        wallet.restoreAddress().then(setQRCodes,
+            function () {
+                return wallet.generateAddress();
+            }).then(setQRCodes,
+            function () {
+                alert('Failed to generate wallet. Refresh and try again.');
             });
-        } else {
-            setQRCodes();
+
+        function setQRCodes() {
+            $('#qrcode').html(createQRCodeCanvas(wallet.getAddress()));
+            $('#textAddress').text(wallet.getAddress());
         }
     }
+    wallet.setBalanceListener(function (balance) {
+        setBalance(balance);
+    });
+    setupWallet();
 
-    function setQRCodes() {
-        $('#qrcode').html(createQRCodeCanvas(wallet.getAddress()));
-        $('#textAddress').text(wallet.getAddress());
-    }
-
-    $amount.on('keyup change', function (e) {
-        val = Math.floor(Number($amount.val() * BTCMultiplier));
-        currencyManager.getExchangeRate(function (rate) {
-            currencyManager.getSymbol(function (symbol, beforeOrAfter) {
-                var text = 'Amount: ';
-                if (val > 0) {
-                    if (beforeOrAfter === 'before') {
-                        text += symbol + (val / satoshis * rate).formatMoney(2);
-                    } else {
-                        text += (val / satoshis * rate).formatMoney(2) + symbol;
-                    }
+    $('#amount').on('keyup change', function () {
+        val = Math.floor(Number($(this).val() * BTCMultiplier));
+        Promise.all([preferences.getExchangeRate(), currencyManager.getSymbol()]).then(function (values) {
+            var text = 'Amount: ';
+            if (val > 0) {
+                var rate = values[0],
+                    symbol = values[1][0],
+                    beforeOrAfter = values[1][1];
+                if (beforeOrAfter === 'before') {
+                    text += symbol + (val / satoshis * rate).formatMoney(2);
+                } else {
+                    text += (val / satoshis * rate).formatMoney(2) + symbol;
                 }
-                $('#amountLabel').text(text);
-            });
+            }
+            $('#amountLabel').text(text);
         });
     });
 
@@ -77,25 +55,31 @@ $(document).ready(function () {
 
         setBalance(wallet.getBalance());
         $('#sendUnit').html(BTCUnits);
-        $amount.attr('placeholder', '(Plus ' + FEE / BTCMultiplier + ' ' + BTCUnits + ' fee)');
-        $amount.attr('step', 100000 / BTCMultiplier)
-    };
+        $('#amount').attr('placeholder', '(Plus ' + FEE / BTCMultiplier + ' ' + BTCUnits + ' fee)').attr('step', 100000 / BTCMultiplier).val(null);
+        $('#amountLabel').text('Amount:');
+    }
+    preferences.getBTCUnits().then(setBTCUnits);
 
     function setBalance(balance) {
+        if (Number(balance) < 0 || isNaN(balance)) {
+            balance = 0;
+        }
         $('#balance').text(balance / BTCMultiplier + ' ' + BTCUnits);
-    };
+    }
 
-    $('#successAlertClose').click(function (e) {
-        $successAlert.fadeOut();
+    $('#successAlertClose').click(function () {
+        $('#successAlert').fadeOut();
     });
 
-    $('#unkownErrorAlertClose').click(function (e) {
+    $('#unkownErrorAlertClose').click(function () {
         $('#unknownErrorAlert').fadeOut();
     });
 
-    // Send BTC
-    $('#sendButton').click(function (e) {
-        val = Math.floor(Number($amount.val() * BTCMultiplier));
+    /*
+     *  Send BTC
+     */
+    $('#sendButton').click(function () {
+        val = Math.floor(Number($('#amount').val() * BTCMultiplier));
         address = $('#sendAddress').val();
         var balance = wallet.getBalance();
         var validAmount = true;
@@ -105,9 +89,9 @@ $(document).ready(function () {
             validAmount = false;
         }
         if (validAmount) {
-            $amountAlert.slideUp();
+            $('#amountAlert').slideUp();
         } else {
-            $amountAlert.slideDown();
+            $('#amountAlert').slideDown();
         }
 
         var regex = /^[13][1-9A-HJ-NP-Za-km-z]{26,33}$/;
@@ -123,27 +107,28 @@ $(document).ready(function () {
         }
 
         if (validAddress) {
-            $addressAlert.slideUp();
+            $('#addressAlert').slideUp();
         } else {
-            $addressAlert.slideDown();
+            $('#addressAlert').slideDown();
         }
 
         if (validAddress && validAmount) {
             if (wallet.isEncrypted()) {
-                currencyManager.getExchangeRate(function (rate) {
-                    currencyManager.getSymbol(function (symbol, beforeOrAfter) {
-                        var text = 'Are you sure you want to send<br />' + val / BTCMultiplier + ' ' + BTCUnits + ' (<strong>';
-                        if (beforeOrAfter === 'before') {
-                            text += symbol + (val / satoshis * rate).formatMoney(2);
-                        } else {
-                            text += (val / satoshis * rate).formatMoney(2) + symbol;
-                        }
-                        text += '</strong>)<br />to ' + address + ' ?';
-                        $('#sendConfirmationText').html(text);
-                        $('#sendConfirmationPassword').val(null);
-                        $('#sendConfirmationPasswordIncorrect').hide();
-                        $('#sendConfirmationModal').modal().show();
-                    });
+                Promise.all([preferences.getExchangeRate(), currencyManager.getSymbol()]).then(function (values) {
+                    var rate = values[0],
+                        symbol = values[1][0],
+                        beforeOrAfter = values[1][1];
+                    var text = 'Are you sure you want to send<br />' + val / BTCMultiplier + ' ' + BTCUnits + ' (<strong>';
+                    if (beforeOrAfter === 'before') {
+                        text += symbol + (val / satoshis * rate).formatMoney(2);
+                    } else {
+                        text += (val / satoshis * rate).formatMoney(2) + symbol;
+                    }
+                    text += '</strong>)<br />to ' + address + ' ?';
+                    $('#sendConfirmationText').html(text);
+                    $('#sendConfirmationPassword').val(null);
+                    $('#sendConfirmationPasswordIncorrect').hide();
+                    $('#sendConfirmationModal').modal().show();
                 });
             } else {
                 confirmSend();
@@ -151,34 +136,32 @@ $(document).ready(function () {
         }
     });
 
-    $('#confirmSendButton').click(function (e) {
+    $('#confirmSendButton').click(function () {
         confirmSend();
     });
 
     function confirmSend() {
         $('#cover').show();
         var password = $('#sendConfirmationPassword').val();
-        wallet.send(address, val, FEE, password, function (status, message) {
-            if (status) {
-                $amount.val(null);
-                $('#sendAddress').val(null);
-                $('#amountLabel').text('Amount:');
-                var text = 'Sent ' + val / BTCMultiplier + ' ' + BTCUnits + ' to ' + address + '.';
-                $successAlertLabel.text(text);
-                $successAlert.slideDown();
-                $('#sendConfirmationModal').modal('hide');
-                $('#cover').fadeOut('slow');
+        wallet.send(address, val, FEE, password).then(function () {
+            $('#amount').val(null);
+            $('#sendAddress').val(null);
+            $('#amountLabel').text('Amount:');
+            var text = 'Sent ' + val / BTCMultiplier + ' ' + BTCUnits + ' to ' + address + '.';
+            $('#successAlertLabel').text(text);
+            $('#successAlert').slideDown();
+            $('#sendConfirmationModal').modal('hide');
+            $('#cover').fadeOut('slow');
+        }, function () {
+            if (wallet.isEncrypted()) {
+                $('#sendConfirmationPasswordIncorrect').text(message).slideDown();
             } else {
-                if (wallet.isEncrypted()) {
-                    $('#sendConfirmationPasswordIncorrect').text(message).slideDown();
-                } else {
-                    $('#unknownErrorAlertLabel').text(message);
-                    $('#unknownErrorAlert').slideDown();
-                }
-                $('#cover').hide();
+                $('#unknownErrorAlertLabel').text(message);
+                $('#unknownErrorAlert').slideDown();
             }
+            $('#cover').hide();
         });
-    };
+    }
 
     /*
      *  Settings Menu
@@ -187,48 +170,39 @@ $(document).ready(function () {
     /*
      * Set Password
      */
-    var $password = $('#setPasswordPassword'),
-        $newPassword = $('#newPassword'),
-        $confirmNewPassword = $('#confirmNewPassword'),
-        $removePassword = $('#removePassword');
-
-    $('#setPassword').click(function (e) {
+    $('#setPassword').click(function () {
         $('#passwordMismatch').hide();
         $('#setPasswordIncorrect').hide();
         $('#setPasswordBlank').hide();
         if (wallet.isEncrypted()) {
             $('#removePasswordDiv').show();
-            $('#setPasswordPassword').show();
+            $('#setPasswordPassword').show().val(null);
         } else {
             $('#removePasswordDiv').hide();
-            $('#setPasswordPassword').hide();
+            $('#setPasswordPassword').hide().val(null);
         }
-        $newPassword.show();
-        $newPassword.val(null)
-        $confirmNewPassword.show();
-        $confirmNewPassword.val(null);
-        $password.val(null);
-        $removePassword.attr('checked', false);
+        $('#newPassword').show().val(null);
+        $('#confirmNewPassword').show().val(null);
+        $('#removePassword').attr('checked', false);
         $('#setPasswordModal').modal().show();
     });
 
-    $removePassword.click(function (e) {
+    $('#removePassword').click(function () {
         if (this.checked) {
-            $newPassword.val(null).slideUp();
-            $confirmNewPassword.val(null).slideUp();
+            $('#newPassword').val(null).slideUp();
+            $('#confirmNewPassword').val(null).slideUp();
         } else {
-            $newPassword.slideDown();
-            $confirmNewPassword.slideDown();
+            $('#newPassword').slideDown();
+            $('#confirmNewPassword').slideDown();
         }
     });
 
-    $('#confirmSetPassword').click(function (e) {
-        var password = $password.val();
-        var newPassword = $newPassword.val();
-        var confirmNewPassword = $confirmNewPassword.val();
-
+    $('#confirmSetPassword').click(function () {
+        var password = $('#setPasswordPassword').val(),
+            newPassword = $('#newPassword').val(),
+            confirmNewPassword = $('#confirmNewPassword').val();
         var validInput = true;
-        if ((wallet.isEncrypted() && !password) || (!$removePassword.is(':checked') && (!newPassword || !confirmNewPassword))) {
+        if ((wallet.isEncrypted() && !password) || (!$('#removePassword').is(':checked') && (!newPassword || !confirmNewPassword))) {
             validInput = false;
             $('#setPasswordBlank').slideDown();
         } else {
@@ -250,9 +224,9 @@ $(document).ready(function () {
         }
 
         if (validInput) {
-            wallet.updatePassword(String(password), String(newPassword), function () {
-                $successAlertLabel.text('New password set.');
-                $successAlert.show();
+            wallet.updatePassword(String(password), String(newPassword)).then(function () {
+                $('#successAlertLabel').text('New password set.');
+                $('#successAlert').show();
                 $('#setPasswordModal').modal('hide');
             });
         }
@@ -262,8 +236,8 @@ $(document).ready(function () {
     /*
      * Currency selection
      */
-    $('#setCurrency').click(function (e) {
-        currencyManager.getCurrency(function (currency) {
+    $('#setCurrency').click(function () {
+        preferences.getCurrency().then(function (currency) {
             var currencies = currencyManager.getAvailableCurrencies();
             var tableBody = '';
             for (var i = 0; i < currencies.length/3; i++) {
@@ -279,13 +253,13 @@ $(document).ready(function () {
             }
             $('#tableBody').html(tableBody);
             $('#setCurrencyModal').modal().show();
-            $('.radio').click(function (e) {
+            $('.radio').click(function () {
                 var currency = $.trim($(this).text());
                 $('input:radio[name=' + currency + ']').attr('checked', 'checked');
-                currencyManager.setCurrency(currency, function () {
+                preferences.setCurrency(currency).then(function () {
                     $('#amountLabel').text('Amount:');
-                    $successAlertLabel.text('Currency set to ' + currency + '.');
-                    $successAlert.show();
+                    $('#successAlertLabel').text('Currency set to ' + currency + '.');
+                    $('#successAlert').show();
                     $('#setCurrencyModal').modal('hide');
                 });
             });
@@ -295,8 +269,8 @@ $(document).ready(function () {
     /*
      * Units selection
      */
-    $('#setUnits').click(function (e) {
-        currencyManager.getBTCUnits(function (units) {
+    $('#setUnits').click(function () {
+        preferences.getBTCUnits().then(function (units) {
             var availableUnits = ['BTC', 'mBTC', 'µBTC'];
             var tableBody = '<tr>';
             for (var i = 0; i < availableUnits.length; i++) {
@@ -309,13 +283,13 @@ $(document).ready(function () {
             tableBody += '</tr>';
             $('#tableBody').html(tableBody);
             $('#setCurrencyModal').modal().show();
-            $('.radio').click(function (e) {
+            $('.radio').click(function () {
                 var units = $.trim($(this).text());
                 $('input:radio[name=' + units + ']').attr('checked', 'checked');
                 setBTCUnits(units);
-                currencyManager.setBTCUnits(units, function () {
-                    $successAlertLabel.text('Units set to ' + units + '.');
-                    $successAlert.show();
+                preferences.setBTCUnits(units).then(function () {
+                    $('#successAlertLabel').text('Units set to ' + units + '.');
+                    $('#successAlert').show();
                     $('#setCurrencyModal').modal('hide');
                 });
             });
@@ -325,31 +299,28 @@ $(document).ready(function () {
     /*
      *  Show Private Key
      */
-    $('#showPrivateKey').click(function (e) {
-        var $passwordField = $('#showPrivateKeyPassword');
-        var $incorrectAlert = $('#showPrivateKeyPasswordIncorrect');
-        $incorrectAlert.hide();
+    $('#showPrivateKey').click(function () {
+        $('#showPrivateKeyPasswordIncorrect').hide();
         if (wallet.isEncrypted()) {
-            $passwordField.val(null).show();
+            $('#showPrivateKeyPassword').val(null).show();
         } else {
-            $passwordField.hide();
+            $('#showPrivateKeyPassword').hide();
         }
         $('#privateKey').hide();
         $('#showPrivateKeyModal').modal().show();
     });
 
-    $('#showPrivateKeyConfirm').click(function (e) {
-        var $passwordField = $('#showPrivateKeyPassword');
-        var $incorrectAlert = $('#showPrivateKeyPasswordIncorrect');
-        if (wallet.isEncrypted() && !wallet.validatePassword($passwordField.val())) {
+    $('#showPrivateKeyConfirm').click(function () {
+        var password = $('#showPrivateKeyPassword').val();
+        if (wallet.isEncrypted() && !wallet.validatePassword(password)) {
             $('#showPrivateKeyPasswordIncorrect').slideDown();
         } else {
-            $incorrectAlert.slideUp();
-            var privateKey = wallet.getDecryptedPrivateKey($passwordField.val());
+            $('#showPrivateKeyPasswordIncorrect').slideUp();
+            var privateKey = wallet.getDecryptedPrivateKey(password);
             $('#privateKeyQRCode').html(createQRCodeCanvas(privateKey));
             $('#privateKeyText').text(privateKey);
             $('#privateKey').slideDown(function () {
-                $('#main').height($('#showPrivateKeyModal .modal-dialog').height());
+                $('#main').height($('#showPrivateKeyModal').find('.modal-dialog').height());
             });
         }
     });
@@ -357,91 +328,73 @@ $(document).ready(function () {
     /*
      *  Import Private Key
      */
-    $('#importPrivateKey').click(function (e) {
-        var $passwordField = $('#importPrivateKeyPassword');
-        var $incorrectAlert = $('#importPrivateKeyPasswordIncorrect');
-        var $badPrivateKeyAlert = $('#importPrivateKeyBadPrivateKey');
-        $incorrectAlert.hide();
-        $badPrivateKeyAlert.hide();
+    $('#importPrivateKey').click(function () {
+        $('#importPrivateKeyPasswordIncorrect').hide();
+        $('#importPrivateKeyBadPrivateKey').hide();
         if (wallet.isEncrypted()) {
-            $passwordField.val(null).show();
+            $('#importPrivateKeyPassword').val(null).show();
         } else {
-            $passwordField.hide();
+            $('#importPrivateKeyPassword').hide();
         }
         $('#importPrivateKeyPrivateKey').val(null);
         $('#importPrivateKeyModal').modal().show();
     });
 
-    $('#importPrivateKeyConfirm').click(function (e) {
-        var $passwordField = $('#importPrivateKeyPassword');
-        var $privateKeyField = $('#importPrivateKeyPrivateKey');
-        var $incorrectAlert = $('#importPrivateKeyPasswordIncorrect');
-        var $badPrivateKeyAlert = $('#importPrivateKeyBadPrivateKey');
+    $('#importPrivateKeyConfirm').click(function () {
+        var privateKey = $('#importPrivateKeyPrivateKey').val();
         try {
-            new Bitcoin.ECKey($privateKeyField.val()).getExportedPrivateKey();
+            new Bitcoin.ECKey(privateKey).getExportedPrivateKey();
         } catch (e) {
-            $badPrivateKeyAlert.slideDown();
+            $('#importPrivateKeyBadPrivateKey').slideDown();
             return;
         }
-        wallet.deleteAddress($passwordField.val(), function (status) {
-            if (!status) {
-                $incorrectAlert.slideDown();
-            } else {
-                $incorrectAlert.slideUp();
-                wallet.importAddress($privateKeyField.val(), function (status) {
-                    if (status) {
-                        setupWallet();
-                        $successAlertLabel.text('Private key imported successfully.');
-                        $successAlert.show();
-                        $('#importPrivateKeyModal').modal('hide');
-                    } else {
-                        $badPrivateKeyAlert.slideDown();
-                    }
-                });
-            }
+        wallet.deleteAddress($('#importPrivateKeyPassword').val()).then(function () {
+            $('#importPrivateKeyPasswordIncorrect').slideUp();
+            wallet.importAddress(privateKey).then(function () {
+                setupWallet();
+                $('#successAlertLabel').text('Private key imported successfully.');
+                $('#successAlert').show();
+                $('#importPrivateKeyModal').modal('hide');
+            }, function () {
+                $('#importPrivateKeyBadPrivateKey').slideDown();
+            });
+        }, function () {
+            $('#importPrivateKeyPasswordIncorrect').slideDown();
         });
     });
 
     /*
      *  Generate New Wallet
      */
-    $('#generateNewWallet').click(function (e) {
-        var $passwordField = $('#generateNewWalletPassword');
-        var $incorrectAlert = $('#generateNewWalletPasswordIncorrect');
-        $incorrectAlert.hide();
+    $('#generateNewWallet').click(function () {
+        $('#generateNewWalletPasswordIncorrect').hide();
         if (wallet.isEncrypted()) {
-            $passwordField.show();
-            $passwordField.val(null);
+            $('#generateNewWalletPassword').show().val(null);
         } else {
-            $passwordField.hide();
+            $('#generateNewWalletPassword').hide();
         }
         $('#generateNewWalletModal').modal().show();
     });
 
-    $('#generateNewWalletConfirm').click(function (e) {
-        var $passwordField = $('#generateNewWalletPassword');
-        var $incorrectAlert = $('#generateNewWalletPasswordIncorrect');
-        wallet.deleteAddress($passwordField.val(), function (status) {
-            if (!status) {
-                $incorrectAlert.slideDown();
-            } else {
-                setupWallet();
-                $successAlertLabel.text('New wallet generated.');
-                $successAlert.show();
-                $('#generateNewWalletModal').modal('hide');
-            }
+    $('#generateNewWalletConfirm').click(function () {
+        wallet.deleteAddress($('#generateNewWalletPassword').val()).then(function () {
+            $('#generateNewWalletPasswordIncorrect').slideDown();
+        }, function () {
+            setupWallet();
+            $('#successAlertLabel').text('New wallet generated.');
+            $('#successAlert').show();
+            $('#generateNewWalletModal').modal('hide');
         });
     });
 
     $('.modal').on('shown.bs.modal', function() {
-        var height = $('#main').height();
+        var $main = $('#main');
+        var height = $main.height();
         var modalHeight = $(this).find('.modal-dialog').height();
         if (modalHeight > height) {
-            $('#main').height(modalHeight);
+            $main.height(modalHeight);
         }
-    })
-
-    $('.modal').on('hidden.bs.modal', function (e) {
+    }).on('hidden.bs.modal', function () {
         $('#main').height('auto');
     });
 

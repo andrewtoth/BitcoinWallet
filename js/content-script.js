@@ -41,11 +41,11 @@ $(document).ready(function () {
             showPopup(address, amount, this.getBoundingClientRect());
             return false;
         }
+        return true;
     });
 
     function showPopup(address, amount, rect) {
-        var regex = /^[13][1-9A-HJ-NP-Za-km-z]{26,33}$/;
-        var iframe = document.createElement('iframe'),
+        var regex = /^[13][1-9A-HJ-NP-Za-km-z]{26,33}$/,
             yPos,
             xPos;
 
@@ -67,15 +67,15 @@ $(document).ready(function () {
             }
         }
 
+        var iframe = document.createElement('iframe');
         iframe.src = 'about:blank';
         document.body.appendChild(iframe);
-        var request = new XMLHttpRequest()
+        var request = new XMLHttpRequest();
         request.open('GET', chrome.extension.getURL("paypopup.html"), false);
         request.send(null);
         var text = request.response;
         text = text.replace(/css\//g, chrome.extension.getURL('') + 'css/');
         text = text.replace(/js\//g, chrome.extension.getURL('') + 'js/');
-
         iframe.contentWindow.document.open('text/html', 'replace');
         iframe.contentWindow.document.write(text);
         iframe.contentWindow.document.close();
@@ -85,26 +85,26 @@ $(document).ready(function () {
         $(iframe.contentWindow).ready(function () {
             var $iframe = $(iframe.contentWindow.document);
 
-            wallet.setBalanceListener(function (balance) {
+            wallet.restoreAddress().then(function () {
                 if (!wallet.isEncrypted()) {
                     $iframe.find('#password').parent().hide();
                 }
-                currencyManager.getBTCUnits(function (units) {
-                    BTCUnits = units;
-                    if (units === 'µBTC') {
-                        BTCMultiplier = satoshis / 1000000;
-                    } else if (units === 'mBTC') {
-                        BTCMultiplier = satoshis / 1000;
-                    } else {
-                        BTCMultiplier = satoshis;
-                    }
-                    $iframe.find('#amount').attr('placeholder', 'Amount (' + BTCUnits + ')').attr('step', 100000 / BTCMultiplier);
+            }, function () {
+                wallet.generateAddress().then(function () {
+                    $iframe.find('#password').parent().hide();
                 });
             });
-            wallet.restoreAddress(function (status) {
-                if (!status) {
-                    wallet.generateAddress(function (status) {});
+
+            preferences.getBTCUnits().then(function (units) {
+                BTCUnits = units;
+                if (units === 'µBTC') {
+                    BTCMultiplier = satoshis / 1000000;
+                } else if (units === 'mBTC') {
+                    BTCMultiplier = satoshis / 1000;
+                } else {
+                    BTCMultiplier = satoshis;
                 }
+                $iframe.find('#amount').attr('placeholder', 'Amount (' + BTCUnits + ')').attr('step', 100000 / BTCMultiplier);
             });
 
             $iframe.find('#progress').hide();
@@ -119,27 +119,28 @@ $(document).ready(function () {
                 $iframe.find('#amount').parent().hide();
                 updateButton(amount);
             } else {
-                $iframe.find('#amount').on('keyup change', function (e) {
+                $iframe.find('#amount').on('keyup change', function () {
                     var value = Math.floor(Number($iframe.find('#amount').val() * BTCMultiplier));
                     updateButton(value);
                 });
             }
 
             function updateButton(value) {
-                currencyManager.getExchangeRate(function (rate) {
-                    currencyManager.getSymbol(function (symbol, beforeOrAfter) {
-                        var text = 'Send';
-                        if (value > 0) {
-                            if (beforeOrAfter === 'before') {
-                                text += ' (' + symbol + (value / satoshis * rate).formatMoney(2) + ')';
-                            } else {
-                                text += ' (' + (value / satoshis * rate).formatMoney(2) + symbol + ')';
-                            }
+                Promise.all([preferences.getExchangeRate(), currencyManager.getSymbol()]).then(function (values) {
+                    var rate = values[0],
+                        symbol = values[1][0],
+                        beforeOrAfter = values[1][1],
+                        text = 'Send';
+                    if (value > 0) {
+                        if (beforeOrAfter === 'before') {
+                            text += ' (' + symbol + (value / satoshis * rate).formatMoney(2) + ')';
+                        } else {
+                            text += ' (' + (value / satoshis * rate).formatMoney(2) + symbol + ')';
                         }
-                        $iframe.find('#button').text(text);
-                    });
+                    }
+                    $iframe.find('#button').text(text);
                 });
-            };
+            }
 
             $iframe.find('#main').hide().fadeIn('fast');
 
@@ -148,7 +149,6 @@ $(document).ready(function () {
                     validAddress = true,
                     newAmount;
                 if (!amount) {
-                    var balance = wallet.getBalance();
                     newAmount = Math.floor(Number($iframe.find('#amount').val() * BTCMultiplier));
                 } else {
                     newAmount = amount;
@@ -197,32 +197,30 @@ $(document).ready(function () {
                     $iframe.find('#password').parent().fadeOut('fast');
                     $iframe.find('#button').fadeOut('fast', function () {
                         $iframe.find('#progress').fadeIn('fast', function () {
-                            wallet.send(newAddress, newAmount, FEE, $iframe.find('#password').val(), function (status, message) {
-                                if (status) {
-                                    $iframe.find('#progress').fadeOut('fast', function () {
-                                        $iframe.find('#successAlert').fadeIn('fast').delay(1000).fadeIn('fast', removeFrame);
-                                    });
-                                } else {
-                                    $iframe.find('#progress').fadeOut('fast', function () {
-                                        if (message === 'Incorrect password') {
-                                            $iframe.find('#password').parent().addClass('has-error');
-                                        } else if (message === 'Insufficient funds') {
-                                            $iframe.find('#amount').parent().addClass('has-error');
-                                        }
-                                        $iframe.find('#errorAlert').text(message).slideDown();
-                                        if (!address) {
-                                            $iframe.find('#address').parent().fadeIn();
-                                        }
-                                        if (!amount) {
-                                            $iframe.find('#amount').parent().fadeIn();
-                                        }
-                                        if (wallet.isEncrypted()) {
-                                            $iframe.find('#password').parent().fadeIn();
-                                        }
-                                        $iframe.find('#button').fadeIn();
-                                        $(document).on('click.wallet contextmenu.wallet', removeFrame);
-                                    });
-                                }
+                            wallet.send(newAddress, newAmount, FEE, $iframe.find('#password').val()).then(function () {
+                                $iframe.find('#progress').fadeOut('fast', function () {
+                                    $iframe.find('#successAlert').fadeIn('fast').delay(1000).fadeIn('fast', removeFrame);
+                                });
+                            }, function () {
+                                $iframe.find('#progress').fadeOut('fast', function () {
+                                    if (message === 'Incorrect password') {
+                                        $iframe.find('#password').parent().addClass('has-error');
+                                    } else if (message === 'Insufficient funds') {
+                                        $iframe.find('#amount').parent().addClass('has-error');
+                                    }
+                                    $iframe.find('#errorAlert').text(message).slideDown();
+                                    if (!address) {
+                                        $iframe.find('#address').parent().fadeIn();
+                                    }
+                                    if (!amount) {
+                                        $iframe.find('#amount').parent().fadeIn();
+                                    }
+                                    if (wallet.isEncrypted()) {
+                                        $iframe.find('#password').parent().fadeIn();
+                                    }
+                                    $iframe.find('#button').fadeIn();
+                                    $(document).on('click.wallet contextmenu.wallet', removeFrame);
+                                });
                             });
                         });
                     });
@@ -238,8 +236,8 @@ $(document).ready(function () {
             $(iframe).fadeOut('fast', function () {
                 $(this).remove();
             });
-        };
-    };
+        }
+    }
 
     Number.prototype.formatMoney = function(c, d, t){
         var n = this,
