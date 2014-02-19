@@ -25,81 +25,6 @@
             balanceListener = listener;
         },
 
-        send: function (sendAddress, amount, fee, password) {
-            return new Promise(function (resolve, reject) {
-                var decryptedPrivateKey = this.getDecryptedPrivateKey(password);
-                if (decryptedPrivateKey) {
-                    ajax.getJSON('https://blockchain.info/unspent?address=' + address).then(function (json) {
-                        var inputs = json.unspent_outputs;
-                        var selectedOuts = [];
-
-                        var eckey = new Bitcoin.ECKey(decryptedPrivateKey);
-                        var totalInt = Number(amount) + Number(fee);
-                        var txValue = new BigInteger('' + totalInt, 10);
-                        var availableValue = BigInteger.ZERO;
-                        var i;
-                        for (i = 0; i < inputs.length; i++) {
-                            selectedOuts.push(inputs[i]);
-                            availableValue = availableValue.add(new BigInteger('' + inputs[i].value, 10));
-                            if (availableValue.compareTo(txValue) >= 0) break;
-                        }
-                        if (availableValue.compareTo(txValue) < 0) {
-                            reject(Error('Insufficient funds'));
-                            return  null;
-                        } else {
-                            var hash,
-                                script;
-                            var sendTx = new Bitcoin.Transaction();
-                            for (i = 0; i < selectedOuts.length; i++) {
-                                hash = Crypto.util.bytesToBase64(Crypto.util.hexToBytes(selectedOuts[i].tx_hash));
-                                script = new Bitcoin.Script(Crypto.util.hexToBytes(selectedOuts[i].script));
-                                var txin = new Bitcoin.TransactionIn({
-                                    outpoint: {
-                                        hash: hash,
-                                        index: selectedOuts[i].tx_output_n
-                                    },
-                                    script: script,
-                                    sequence: 4294967295
-                                });
-                                sendTx.addInput(txin);
-                            }
-
-                            sendTx.addOutput(new Bitcoin.Address(sendAddress), new BigInteger('' + amount, 10));
-
-                            var changeValue = availableValue.subtract(txValue);
-                            if (changeValue.compareTo(BigInteger.ZERO) > 0) {
-                                sendTx.addOutput(eckey.getBitcoinAddress(), changeValue);
-                            }
-
-                            var hashType = 1; // SIGHASH_ALL
-                            for (i = 0; i < sendTx.ins.length; i++) {
-                                var connectedScript = sendTx.ins[i].script;
-                                hash = sendTx.hashTransactionForSignature(connectedScript, i, hashType);
-                                var signature = eckey.sign(hash);
-                                signature.push(parseInt(hashType, 10));
-                                var pubKey = eckey.getPub();
-                                script = new Bitcoin.Script();
-                                script.writeBytes(signature);
-                                script.writeBytes(pubKey);
-                                sendTx.ins[i].script = script;
-                            }
-                            var data = 'tx=' + Crypto.util.bytesToHex(sendTx.serialize());
-                            return ajax.post('https://blockchain.info/pushtx', data);
-                        }
-                    }, function () {
-                        reject(Error('Insufficient funds'));
-                    }).then(function () {
-                        balanceListener(balance - amount - fee);
-                        resolve();
-                    }, function () {
-                        reject(Error('Unknown error'));
-                    });
-                } else {
-                    reject(Error('Incorrect password'));
-                }
-            });
-        },
-
         generateAddress: function () {
             return new Promise(function (resolve, reject) {
                 if (!address.length) {
@@ -152,46 +77,6 @@
                     }
                 } else {
                     reject(Error('Current address must be deleted'));
-                }
-            });
-        },
-
-        deleteAddress: function (password) {
-            return new Promise(function (resolve, reject) {
-                if (this.validatePassword(password)) {
-                    if (websocket) {
-                        websocket.close();
-                        websocket = null;
-                    }
-                    balance = 0;
-                    address = '';
-                    privateKey = '';
-                    isEncrypted = false;
-                    Promise.all([preferences.setAddress(''), preferences.setPrivateKey('')]).then(function () {
-                        resolve();
-                    });
-                } else {
-                    reject(Error('Incorrect password'));
-                }
-            });
-        },
-
-        updatePassword: function (password, newPassword) {
-            return new Promise(function (resolve, reject) {
-                var decryptedPrivateKey = this.getDecryptedPrivateKey(password);
-                if (decryptedPrivateKey) {
-                    if (newPassword) {
-                        privateKey = CryptoJS.AES.encrypt(decryptedPrivateKey, newPassword);
-                        isEncrypted = true;
-                    } else {
-                        privateKey = decryptedPrivateKey;
-                        isEncrypted = false;
-                    }
-                    Promise.all([preferences.setIsEncrypted(isEncrypted), preferences.setPrivateKey(privateKey)]).then(function () {
-                        resolve();
-                    });
-                } else {
-                    reject(Error('Incorrect password'));
                 }
             });
         },
@@ -269,5 +154,122 @@
         }
     }
 
-    window.wallet = new wallet();
+    var ret = new wallet();
+
+    wallet.prototype.updatePassword = function (password, newPassword) {
+        return new Promise(function (resolve, reject) {
+            var decryptedPrivateKey = ret.getDecryptedPrivateKey(password);
+            if (decryptedPrivateKey) {
+                if (newPassword) {
+                    privateKey = CryptoJS.AES.encrypt(decryptedPrivateKey, newPassword);
+                    isEncrypted = true;
+                } else {
+                    privateKey = decryptedPrivateKey;
+                    isEncrypted = false;
+                }
+                Promise.all([preferences.setIsEncrypted(isEncrypted), preferences.setPrivateKey(privateKey)]).then(function () {
+                    resolve();
+                });
+            } else {
+                reject(Error('Incorrect password'));
+            }
+        });
+    };
+
+    wallet.prototype.send = function (sendAddress, amount, fee, password) {
+        return new Promise(function (resolve, reject) {
+            var decryptedPrivateKey = ret.getDecryptedPrivateKey(password);
+            if (decryptedPrivateKey) {
+                ajax.getJSON('https://blockchain.info/unspent?address=' + address).then(function (json) {
+                    var inputs = json.unspent_outputs;
+                    var selectedOuts = [];
+
+                    var eckey = new Bitcoin.ECKey(decryptedPrivateKey);
+                    var totalInt = Number(amount) + Number(fee);
+                    var txValue = new BigInteger('' + totalInt, 10);
+                    var availableValue = BigInteger.ZERO;
+                    var i;
+                    for (i = 0; i < inputs.length; i++) {
+                        selectedOuts.push(inputs[i]);
+                        availableValue = availableValue.add(new BigInteger('' + inputs[i].value, 10));
+                        if (availableValue.compareTo(txValue) >= 0) break;
+                    }
+                    if (availableValue.compareTo(txValue) < 0) {
+                        reject(Error('Insufficient funds'));
+                        return  null;
+                    } else {
+                        var hash,
+                            script;
+                        var sendTx = new Bitcoin.Transaction();
+                        for (i = 0; i < selectedOuts.length; i++) {
+                            hash = Crypto.util.bytesToBase64(Crypto.util.hexToBytes(selectedOuts[i].tx_hash));
+                            script = new Bitcoin.Script(Crypto.util.hexToBytes(selectedOuts[i].script));
+                            var txin = new Bitcoin.TransactionIn({
+                                outpoint: {
+                                    hash: hash,
+                                    index: selectedOuts[i].tx_output_n
+                                },
+                                script: script,
+                                sequence: 4294967295
+                            });
+                            sendTx.addInput(txin);
+                        }
+
+                        sendTx.addOutput(new Bitcoin.Address(sendAddress), new BigInteger('' + amount, 10));
+
+                        var changeValue = availableValue.subtract(txValue);
+                        if (changeValue.compareTo(BigInteger.ZERO) > 0) {
+                            sendTx.addOutput(eckey.getBitcoinAddress(), changeValue);
+                        }
+
+                        var hashType = 1; // SIGHASH_ALL
+                        for (i = 0; i < sendTx.ins.length; i++) {
+                            var connectedScript = sendTx.ins[i].script;
+                            hash = sendTx.hashTransactionForSignature(connectedScript, i, hashType);
+                            var signature = eckey.sign(hash);
+                            signature.push(parseInt(hashType, 10));
+                            var pubKey = eckey.getPub();
+                            script = new Bitcoin.Script();
+                            script.writeBytes(signature);
+                            script.writeBytes(pubKey);
+                            sendTx.ins[i].script = script;
+                        }
+                        var data = 'tx=' + Crypto.util.bytesToHex(sendTx.serialize());
+                        return ajax.post('https://blockchain.info/pushtx', data);
+                    }
+                }, function () {
+                    reject(Error('Insufficient funds'));
+                }).then(function () {
+                    balanceListener(balance - amount - fee);
+                    resolve();
+                }, function () {
+                    reject(Error('Unknown error'));
+                });
+            } else {
+                reject(Error('Incorrect password'));
+            }
+        });
+    };
+
+    wallet.prototype.deleteAddress = function (password) {
+        return new Promise(function (resolve, reject) {
+            if (ret.validatePassword(password)) {
+                if (websocket) {
+                    websocket.close();
+                    websocket = null;
+                }
+                balance = 0;
+                address = '';
+                privateKey = '';
+                isEncrypted = false;
+                Promise.all([preferences.setAddress(''), preferences.setPrivateKey('')]).then(function () {
+                    resolve();
+                });
+            } else {
+                reject(Error('Incorrect password'));
+            }
+        });
+    };
+
+    window.wallet = ret;
 })(window);

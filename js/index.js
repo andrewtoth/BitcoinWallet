@@ -2,10 +2,10 @@ $(document).ready(function () {
     // Setup the wallet, page values and callbacks
     var val = '',
         address = '',
-        satoshis = 100000000,
-        FEE = satoshis * .0001,
+        SATOSHIS = 100000000,
+        FEE = SATOSHIS * .0001,
         BTCUnits = 'BTC',
-        BTCMultiplier = satoshis;
+        BTCMultiplier = SATOSHIS;
     function setupWallet() {
         wallet.restoreAddress().then(setQRCodes,
             function () {
@@ -27,30 +27,24 @@ $(document).ready(function () {
 
     $('#amount').on('keyup change', function () {
         val = Math.floor(Number($(this).val() * BTCMultiplier));
-        Promise.all([preferences.getExchangeRate(), currencyManager.getSymbol()]).then(function (values) {
-            var text = 'Amount: ';
-            if (val > 0) {
-                var rate = values[0],
-                    symbol = values[1][0],
-                    beforeOrAfter = values[1][1];
-                if (beforeOrAfter === 'before') {
-                    text += symbol + (val / satoshis * rate).formatMoney(2);
-                } else {
-                    text += (val / satoshis * rate).formatMoney(2) + symbol;
-                }
-            }
-            $('#amountLabel').text(text);
-        });
+        if (val > 0) {
+            currencyManager.formatAmount(val).then(function (formattedMoney) {
+                var text = 'Amount: ' + formattedMoney;
+                $('#amountLabel').text(text);
+            });
+        } else {
+            $('#amountLabel').text('Amount:');
+        }
     });
 
     function setBTCUnits(units) {
         BTCUnits = units;
         if (units === 'µBTC') {
-            BTCMultiplier = satoshis / 1000000;
+            BTCMultiplier = SATOSHIS / 1000000;
         } else if (units === 'mBTC') {
-            BTCMultiplier = satoshis / 1000;
+            BTCMultiplier = SATOSHIS / 1000;
         } else {
-            BTCMultiplier = satoshis;
+            BTCMultiplier = SATOSHIS;
         }
 
         setBalance(wallet.getBalance());
@@ -114,17 +108,8 @@ $(document).ready(function () {
 
         if (validAddress && validAmount) {
             if (wallet.isEncrypted()) {
-                Promise.all([preferences.getExchangeRate(), currencyManager.getSymbol()]).then(function (values) {
-                    var rate = values[0],
-                        symbol = values[1][0],
-                        beforeOrAfter = values[1][1];
-                    var text = 'Are you sure you want to send<br />' + val / BTCMultiplier + ' ' + BTCUnits + ' (<strong>';
-                    if (beforeOrAfter === 'before') {
-                        text += symbol + (val / satoshis * rate).formatMoney(2);
-                    } else {
-                        text += (val / satoshis * rate).formatMoney(2) + symbol;
-                    }
-                    text += '</strong>)<br />to ' + address + ' ?';
+                currencyManager.formatAmount(val).then(function (formattedMoney) {
+                    var text = 'Are you sure you want to send<br />' + val / BTCMultiplier + ' ' + BTCUnits + ' (<strong>' + formattedMoney + '</strong>)<br />to ' + address + ' ?';
                     $('#sendConfirmationText').html(text);
                     $('#sendConfirmationPassword').val(null);
                     $('#sendConfirmationPasswordIncorrect').hide();
@@ -387,6 +372,20 @@ $(document).ready(function () {
         });
     });
 
+    /*
+     * About
+     */
+    $('#version').text(chrome.runtime.getManifest().version);
+
+    $('#aboutModal').on('click', 'a', function () {
+        chrome.tabs.create({url: $(this).attr('href')});
+        return false;
+    });
+
+    /*
+     * Resizing
+     */
+
     $('.modal').on('shown.bs.modal', function() {
         var $main = $('#main');
         var height = $main.height();
@@ -398,60 +397,44 @@ $(document).ready(function () {
         $('#main').height('auto');
     });
 
-    $('#aboutModal').on('click', 'a', function () {
-        chrome.tabs.create({url: $(this).attr('href')});
-        return false;
-    });
-});
-
-Number.prototype.formatMoney = function(c, d, t){
-    var n = this,
-        c = isNaN(c = Math.abs(c)) ? 2 : c,
-        d = d == undefined ? "." : d,
-        t = t == undefined ? "," : t,
-        s = n < 0 ? "-" : "",
-        i = parseInt(n = Math.abs(+n || 0).toFixed(c)) + "",
-        j = (j = i.length) > 3 ? j % 3 : 0;
-    return s + (j ? i.substr(0, j) + t : "") + i.substr(j).replace(/(\d{3})(?=\d)/g, "$1" + t) + (c ? d + Math.abs(n - i).toFixed(c).slice(2) : "");
-};
-
-function createQRCodeCanvas(text) {
-    var sizeMultiplier = 4;
-    var typeNumber;
-    var lengthCalculation = text.length * 8 + 12;
-    if (lengthCalculation < 72) { typeNumber = 1; }
-    else if (lengthCalculation < 128) { typeNumber = 2; }
-    else if (lengthCalculation < 208) { typeNumber = 3; }
-    else if (lengthCalculation < 288) { typeNumber = 4; }
-    else if (lengthCalculation < 368) { typeNumber = 5; }
-    else if (lengthCalculation < 480) { typeNumber = 6; }
-    else if (lengthCalculation < 528) { typeNumber = 7; }
-    else if (lengthCalculation < 688) { typeNumber = 8; }
-    else if (lengthCalculation < 800) { typeNumber = 9; }
-    else if (lengthCalculation < 976) { typeNumber = 10; }
-    var qrcode = new QRCode(typeNumber, QRCode.ErrorCorrectLevel.H);
-    qrcode.addData(text);
-    qrcode.make();
-    var width = qrcode.getModuleCount() * sizeMultiplier;
-    var height = qrcode.getModuleCount() * sizeMultiplier;
-    // create canvas element
-    var canvas = document.createElement('canvas');
-    var scale = 10.0;
-    canvas.width = width * scale;
-    canvas.height = height * scale;
-    canvas.style.width = width + 'px';
-    canvas.style.height = height + 'px';
-    var ctx = canvas.getContext('2d');
-    ctx.scale(scale, scale);
-    // compute tileW/tileH based on width/height
-    var tileW = width / qrcode.getModuleCount();
-    var tileH = height / qrcode.getModuleCount();
-    // draw in the canvas
-    for (var row = 0; row < qrcode.getModuleCount(); row++) {
-        for (var col = 0; col < qrcode.getModuleCount(); col++) {
-            ctx.fillStyle = qrcode.isDark(row, col) ? "#000000" : "#ffffff";
-            ctx.fillRect(col * tileW, row * tileH, tileW, tileH);
+    function createQRCodeCanvas(text) {
+        var sizeMultiplier = 4;
+        var typeNumber;
+        var lengthCalculation = text.length * 8 + 12;
+        if (lengthCalculation < 72) { typeNumber = 1; }
+        else if (lengthCalculation < 128) { typeNumber = 2; }
+        else if (lengthCalculation < 208) { typeNumber = 3; }
+        else if (lengthCalculation < 288) { typeNumber = 4; }
+        else if (lengthCalculation < 368) { typeNumber = 5; }
+        else if (lengthCalculation < 480) { typeNumber = 6; }
+        else if (lengthCalculation < 528) { typeNumber = 7; }
+        else if (lengthCalculation < 688) { typeNumber = 8; }
+        else if (lengthCalculation < 800) { typeNumber = 9; }
+        else if (lengthCalculation < 976) { typeNumber = 10; }
+        var qrcode = new QRCode(typeNumber, QRCode.ErrorCorrectLevel.H);
+        qrcode.addData(text);
+        qrcode.make();
+        var width = qrcode.getModuleCount() * sizeMultiplier;
+        var height = qrcode.getModuleCount() * sizeMultiplier;
+        // create canvas element
+        var canvas = document.createElement('canvas');
+        var scale = 10.0;
+        canvas.width = width * scale;
+        canvas.height = height * scale;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        var ctx = canvas.getContext('2d');
+        ctx.scale(scale, scale);
+        // compute tileW/tileH based on width/height
+        var tileW = width / qrcode.getModuleCount();
+        var tileH = height / qrcode.getModuleCount();
+        // draw in the canvas
+        for (var row = 0; row < qrcode.getModuleCount(); row++) {
+            for (var col = 0; col < qrcode.getModuleCount(); col++) {
+                ctx.fillStyle = qrcode.isDark(row, col) ? "#000000" : "#ffffff";
+                ctx.fillRect(col * tileW, row * tileH, tileW, tileH);
+            }
         }
+        return canvas;
     }
-    return canvas;
-}
+});

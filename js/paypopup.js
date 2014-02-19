@@ -1,8 +1,8 @@
 $(document).ready(function () {
-    var satoshis = 100000000,
-    FEE = satoshis * .0001,
+    var SATOSHIS = 100000000,
+    FEE = SATOSHIS * .0001,
     BTCUnits = 'BTC',
-    BTCMultiplier = satoshis,
+    BTCMultiplier = SATOSHIS,
     clickX,
     clickY,
     port = null;
@@ -36,7 +36,7 @@ $(document).ready(function () {
             var amounts = href.match(/amount=\d+\.?\d*/);
             var amount = null;
             if (amounts) {
-                amount = Number(amounts[0].substring(7)) * satoshis;
+                amount = Number(amounts[0].substring(7)) * SATOSHIS;
             }
             showPopup(address, amount, this.getBoundingClientRect());
             return false;
@@ -75,7 +75,6 @@ $(document).ready(function () {
         request.send(null);
         var text = request.response;
         text = text.replace(/css\//g, chrome.extension.getURL('') + 'css/');
-        text = text.replace(/js\//g, chrome.extension.getURL('') + 'js/');
         iframe.contentWindow.document.open('text/html', 'replace');
         iframe.contentWindow.document.write(text);
         iframe.contentWindow.document.close();
@@ -85,24 +84,23 @@ $(document).ready(function () {
         $(iframe.contentWindow).ready(function () {
             var $iframe = $(iframe.contentWindow.document);
 
+            $iframe.find('#password').parent().hide();
             wallet.restoreAddress().then(function () {
-                if (!wallet.isEncrypted()) {
-                    $iframe.find('#password').parent().hide();
+                if (wallet.isEncrypted()) {
+                    $iframe.find('#password').parent().show();
                 }
             }, function () {
-                wallet.generateAddress().then(function () {
-                    $iframe.find('#password').parent().hide();
-                });
+                wallet.generateAddress();
             });
 
             preferences.getBTCUnits().then(function (units) {
                 BTCUnits = units;
                 if (units === 'µBTC') {
-                    BTCMultiplier = satoshis / 1000000;
+                    BTCMultiplier = SATOSHIS / 1000000;
                 } else if (units === 'mBTC') {
-                    BTCMultiplier = satoshis / 1000;
+                    BTCMultiplier = SATOSHIS / 1000;
                 } else {
-                    BTCMultiplier = satoshis;
+                    BTCMultiplier = SATOSHIS;
                 }
                 $iframe.find('#amount').attr('placeholder', 'Amount (' + BTCUnits + ')').attr('step', 100000 / BTCMultiplier);
             });
@@ -126,17 +124,10 @@ $(document).ready(function () {
             }
 
             function updateButton(value) {
-                Promise.all([preferences.getExchangeRate(), currencyManager.getSymbol()]).then(function (values) {
-                    var rate = values[0],
-                        symbol = values[1][0],
-                        beforeOrAfter = values[1][1],
-                        text = 'Send';
+                currencyManager.formatAmount(value).then(function (formattedMoney) {
+                    var text = 'Send';
                     if (value > 0) {
-                        if (beforeOrAfter === 'before') {
-                            text += ' (' + symbol + (value / satoshis * rate).formatMoney(2) + ')';
-                        } else {
-                            text += ' (' + (value / satoshis * rate).formatMoney(2) + symbol + ')';
-                        }
+                        text += ' (' + formattedMoney + ')';
                     }
                     $iframe.find('#button').text(text);
                 });
@@ -238,16 +229,5 @@ $(document).ready(function () {
             });
         }
     }
-
-    Number.prototype.formatMoney = function(c, d, t){
-        var n = this,
-            c = isNaN(c = Math.abs(c)) ? 2 : c,
-            d = d == undefined ? "." : d,
-            t = t == undefined ? "," : t,
-            s = n < 0 ? "-" : "",
-            i = parseInt(n = Math.abs(+n || 0).toFixed(c)) + "",
-            j = (j = i.length) > 3 ? j % 3 : 0;
-        return s + (j ? i.substr(0, j) + t : "") + i.substr(j).replace(/(\d{3})(?=\d)/g, "$1" + t) + (c ? d + Math.abs(n - i).toFixed(c).slice(2) : "");
-    };
 
 });
