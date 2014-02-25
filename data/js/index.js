@@ -73,6 +73,9 @@ $(document).ready(function () {
 
     $('#successAlertClose').click(function () {
         $('#successAlert').fadeOut();
+        if (typeof chrome === 'undefined') {
+            addon.port.emit('resize', 278);
+        }
     });
 
     $('#unkownErrorAlertClose').click(function () {
@@ -425,7 +428,12 @@ $(document).ready(function () {
     }).on('hidden.bs.modal', function () {
         $('#main').height('auto');
         if (typeof chrome === 'undefined') {
-            addon.port.emit('resize', 278);
+            if ($('#successAlert').is(':visible')) {
+                var height = 350;
+            } else {
+                var height = 278;
+            }
+            addon.port.emit('resize', height);
         }
     });
 

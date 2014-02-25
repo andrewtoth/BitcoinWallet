@@ -43,7 +43,11 @@
                 if (ret.validatePassword(password)) {
                     var eckey = new Bitcoin.ECKey(false);
                     if (isEncrypted) {
-                        privateKey = JSON.parse(CryptoJS.AES.encrypt(eckey.getExportedPrivateKey(), password, {format:jsonFormatter}));
+                        if (typeof chrome !== 'undefined') {
+                            privateKey = CryptoJS.AES.encrypt(eckey.getExportedPrivateKey(), password);
+                        } else {
+                            privateKey = JSON.parse(CryptoJS.AES.encrypt(eckey.getExportedPrivateKey(), password, {format:jsonFormatter}));
+                        }
                     } else {
                         privateKey = eckey.getExportedPrivateKey();
                     }
@@ -83,7 +87,11 @@
                     try {
                         var eckey = new Bitcoin.ECKey(_privateKey);
                         if (isEncrypted) {
-                            privateKey = JSON.parse(CryptoJS.AES.encrypt(eckey.getExportedPrivateKey(), password, {format:jsonFormatter}));
+                            if (typeof chrome !== 'undefined') {
+                                privateKey = CryptoJS.AES.encrypt(eckey.getExportedPrivateKey(), password);
+                            } else {
+                                privateKey = JSON.parse(CryptoJS.AES.encrypt(eckey.getExportedPrivateKey(), password, {format:jsonFormatter}));
+                            }
                         } else {
                             privateKey = eckey.getExportedPrivateKey();
                         }
@@ -108,7 +116,11 @@
                 try {
                     // If we can decrypt the private key with the password, then the password is correct
                     // We never store a copy of the password anywhere
-                    return CryptoJS.AES.decrypt(JSON.stringify(privateKey), password, {format:jsonFormatter}).toString(CryptoJS.enc.Utf8);
+                    if (typeof chrome !== 'undefined') {
+                        return CryptoJS.AES.decrypt(privateKey, password).toString(CryptoJS.enc.Utf8);
+                    } else {
+                        return CryptoJS.AES.decrypt(JSON.stringify(privateKey), password, {format:jsonFormatter}).toString(CryptoJS.enc.Utf8);
+                    }
                 } catch (e) {
                     return false;
                 }
@@ -120,7 +132,11 @@
         // Return a decrypted private key using the password
         getDecryptedPrivateKey: function (password) {
             if (isEncrypted) {
-                var decryptedPrivateKey = CryptoJS.AES.decrypt(JSON.stringify(privateKey), password, {format:jsonFormatter});
+                if (typeof chrome !== 'undefined') {
+                    var decryptedPrivateKey = CryptoJS.AES.decrypt(privateKey, password);
+                } else {
+                    var decryptedPrivateKey = CryptoJS.AES.decrypt(JSON.stringify(privateKey), password, {format:jsonFormatter});
+                }
                 try {
                     if (!decryptedPrivateKey.toString(CryptoJS.enc.Utf8)) {
                         return null;
@@ -200,7 +216,11 @@
             if (decryptedPrivateKey) {
                 // If we have a new password we use it, otherwise leave cleartext
                 if (newPassword) {
-                    privateKey = JSON.parse(CryptoJS.AES.encrypt(decryptedPrivateKey, newPassword, {format:jsonFormatter}));
+                    if (typeof chrome !== 'undefined') {
+                        privateKey = CryptoJS.AES.encrypt(eckey.getExportedPrivateKey(), newPassword);
+                    } else {
+                        privateKey = JSON.parse(CryptoJS.AES.encrypt(decryptedPrivateKey, newPassword, {format:jsonFormatter}));
+                    }
                     isEncrypted = true;
                 } else {
                     privateKey = decryptedPrivateKey;
